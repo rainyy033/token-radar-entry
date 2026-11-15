@@ -31,6 +31,8 @@
   }
   // The model in one function: the page recomputes a row from the snapshot figures and checks the
   // number board.json carries, so the page's code and the board's data are visibly the same arithmetic.
+  // categoryMultOf must mirror categoryMult in lib/model.ts exactly: the page shows the same multiple
+  // the board was scored with, and a drift here would make the recomputed value disagree with the data.
   function categoryMultOf(category, model) {
     var c = (category || '').toLowerCase();
     if (c.indexOf('liquid staking') >= 0 || c.indexOf('liquid restaking') >= 0 || c.indexOf('restaked btc') >= 0 || c.indexOf('anchor btc') >= 0) return model.mult_liquid_staking;

@@ -132,7 +132,8 @@ function fenceFor(body: string): string {
 
 /** The fence a file's extension is shown with. */
 function languageOf(path: string): string {
-  const ext = path.slice(path.lastIndexOf('.') + 1);
+  const at = path.lastIndexOf('.');
+  const ext = at < 0 ? '' : path.slice(at + 1);
   return ext === 'mjs' ? 'js' : ext;
 }
 
