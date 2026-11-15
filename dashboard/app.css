@@ -103,6 +103,9 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 8%
 .empty p { color: var(--muted); }
 .button { min-height: 36px; padding: 0 var(--step-4); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
 .button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.button, .close, .tabs button { transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
+.button:hover, .close:hover { border-color: var(--accent); }
+.tabs button:hover { color: var(--ink); }
 
 .detail {
   position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 92vw); z-index: 10;

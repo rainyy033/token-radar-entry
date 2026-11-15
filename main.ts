@@ -42,7 +42,15 @@ if (!existsSync(inputFile)) {
 }
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
-const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
+// Refuse a snapshot the model cannot score with one clean line, not a stack trace.
+const snapshotText = readFileSync(inputFile, 'utf8');
+let snapshot: ReturnType<typeof parseSnapshot>;
+try {
+  snapshot = parseSnapshot(snapshotText);
+} catch (err) {
+  process.stderr.write(`token radar: cannot score the snapshot: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(2);
+}
 
 // --min-tvl <usd>: the TVL floor an extra no-token protocol needs to join the board; default the model's $5M.
 const minTvlRaw = arg('min-tvl', String(MIN_TVL_USD));
