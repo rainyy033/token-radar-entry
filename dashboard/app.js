@@ -42,7 +42,9 @@
     var mult = categoryMultOf(row.category, model);
     var change = row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d;
     var adj = Math.min(model.growth_cap, Math.max(model.growth_floor, 1 + change / model.growth_divisor));
-    return Math.max(model.min_implied_usd, Math.round(row.tvl_usd * mult * adj));
+    var growthValue = row.tvl_usd * mult * adj;
+    var blended = (1 - model.tvl_weight) * growthValue + model.tvl_weight * row.tvl_usd;
+    return Math.max(model.min_implied_usd, Math.round(blended));
   }
 
   function el(tag, attrs) {
@@ -173,7 +175,7 @@
     return el('section', { class: 'lede' },
       el('div', null,
         el('h1', { text: DATA.watchlist_size + ' watchlist protocols, ranked by implied value' }),
-        el('p', { text: 'The watchlist is the floor: every protocol with at least $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL and no token on record. The board adds ' + DATA.early_size + ' more no-token protocols at or above the snapshot\u2019s $5M floor. Implied value is a model, not a promise.' })
+        el('p', { text: 'The watchlist is the floor: every protocol with at least $' + Math.round(DATA.floor_usd / 1e6) + 'M of TVL and no token on record. The board adds ' + DATA.early_size + ' more no-token protocols at or above the $' + Math.round(DATA.min_tvl_usd / 1e6) + 'M floor. Implied value is a model, not a promise.' })
       ),
       el('div', { class: 'facts' },
         el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
@@ -296,9 +298,9 @@
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
       el('div', { class: 'formula' },
-        'implied = max(' + fmtInt(m.min_implied_usd) + ', round( tvl_usd x category_mult x clamp(1 + change_7d / ' + m.growth_divisor + ', ' + m.growth_floor + ', ' + m.growth_cap + ') ) )'
+        'implied = max(' + fmtInt(m.min_implied_usd) + ', round( (1 - ' + m.tvl_weight + ') x tvl_usd x category_mult x clamp(1 + change_7d / ' + m.growth_divisor + ', ' + m.growth_floor + ', ' + m.growth_cap + ') + ' + m.tvl_weight + ' x tvl_usd ) )'
       ),
-      el('p', { class: 'sub', text: 'category_mult is the multiple of TVL a category\u2019s tokens have historically traded at: liquid staking ' + m.mult_liquid_staking + 'x, DEX and lending ' + m.mult_dex_lending + 'x, infra and wallets ' + m.mult_infra_wallet + 'x, everything else ' + m.mult_rest + 'x. TVL and seven-day growth come from the snapshot. The board adds every no-token protocol at or above the snapshot\u2019s $5M floor until it clears the 100-row floor, and the live-token protocols are set aside with their market caps shown.' })
+      el('p', { class: 'sub', text: 'category_mult is the multiple of TVL a category\u2019s tokens have historically traded at: liquid staking ' + m.mult_liquid_staking + 'x, DEX and lending ' + m.mult_dex_lending + 'x, infra and wallets ' + m.mult_infra_wallet + 'x, everything else ' + m.mult_rest + 'x. ' + Math.round(m.tvl_weight * 100) + '% of every value is raw TVL, and the rest is the growth-adjusted multiple, so a deep protocol is not left to its category alone. TVL and seven-day growth come from the snapshot. The board adds every no-token protocol at or above the $' + Math.round(DATA.min_tvl_usd / 1e6) + 'M floor until it clears the 100-row floor, and the live-token protocols are set aside with their market caps shown.' })
     );
   }
 

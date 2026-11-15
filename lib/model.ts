@@ -12,9 +12,12 @@
 //   category_mult = the multiple of TVL a category's tokens have historically traded at
 //                   (liquid staking 8x, DEX/lending 5x, infra/wallet 10x, everything else 3x)
 //   growth_adj    = clamp(1 + change_7d / 200, 0.5, 2)   (change_7d unknown: 0)
-//   implied       = max(1,000,000, round(tvl_usd x category_mult x growth_adj))
+//   growth_value  = tvl_usd x category_mult x growth_adj
+//   implied       = max(1,000,000, round((1 - tvl_weight) x growth_value + tvl_weight x tvl_usd))
 //
-// The constants are the house model's, stated in the dashboard and changeable in the model sandbox.
+// tvl_weight is the share of every value that comes from pure TVL rather than the growth-adjusted
+// multiple, so a deep, proven protocol is not left entirely to its category. The constants are the
+// house model's, stated in the dashboard and changeable in the model sandbox.
 // No protocol name is ever special-cased: the same function scores every row.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
@@ -46,6 +49,7 @@ export interface ModelConstants {
   growth_divisor: number;
   growth_floor: number;
   growth_cap: number;
+  tvl_weight: number;
   mult_liquid_staking: number;
   mult_dex_lending: number;
   mult_infra_wallet: number;
@@ -57,6 +61,7 @@ export const MODEL: ModelConstants = {
   growth_divisor: 200,
   growth_floor: 0.5,
   growth_cap: 2,
+  tvl_weight: 0.3,
   mult_liquid_staking: 8,
   mult_dex_lending: 5,
   mult_infra_wallet: 10,
@@ -139,6 +144,7 @@ export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
+  min_tvl_usd: number;
   model: ModelConstants;
   model_version: string;
   watchlist_size: number;
@@ -230,18 +236,20 @@ export function categoryMult(category: string | null, model: ModelConstants = MO
   return model.mult_rest;
 }
 
-/** The category multiplier, growth adjustment and implied value one protocol gets under `model`. */
+/** The category multiplier, growth adjustment, exact blended score and rounded implied value one protocol gets under `model`. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
   model: ModelConstants = MODEL,
-): { implied: number; growthAdj: number; categoryMult: number; age: number | null } {
+): { implied: number; score: number; growthAdj: number; categoryMult: number; age: number | null } {
   const age = ageDays(asOf, protocol.listed_at);
   const mult = categoryMult(protocol.category, model);
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthAdj = Math.min(model.growth_cap, Math.max(model.growth_floor, 1 + rawGrowth / model.growth_divisor));
-  const implied = Math.max(model.min_implied_usd, Math.round(protocol.tvl_usd * mult * growthAdj));
-  return { implied, growthAdj, categoryMult: mult, age };
+  const growthValue = protocol.tvl_usd * mult * growthAdj;
+  const blended = (1 - model.tvl_weight) * growthValue + model.tvl_weight * protocol.tvl_usd;
+  const implied = Math.max(model.min_implied_usd, Math.round(blended));
+  return { implied, score: blended, growthAdj, categoryMult: mult, age };
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
@@ -260,11 +268,11 @@ export interface BoardSummary {
 }
 
 /** The protocols the board ranks, strongest first, with ranks 1..n. */
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
+export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL, minTvlUsd: number = MIN_TVL_USD): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const scored = snapshot.protocols.map((p) => {
-    const { implied, growthAdj, categoryMult, age } = impliedValue(p, snapshot.as_of, model);
-    return { p, implied, growthAdj, categoryMult, age };
+    const { implied, score, growthAdj, categoryMult, age } = impliedValue(p, snapshot.as_of, model);
+    return { p, implied, score, growthAdj, categoryMult, age };
   });
   const byScore = new Map(scored.map((s) => [s.p.slug, s]));
 
@@ -278,8 +286,8 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
   // Extra no-token protocols at or above the snapshot's own floor, strongest implied value first, until
   // the board clears the gate's 100-row floor. A chosen protocol stays chosen.
   const extras = scored
-    .filter((s) => !chosen.has(s.p.slug) && isNoTokenProtocol(s.p) && s.p.tvl_usd >= MIN_TVL_USD)
-    .sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
+    .filter((s) => !chosen.has(s.p.slug) && isNoTokenProtocol(s.p) && s.p.tvl_usd >= minTvlUsd)
+    .sort((a, b) => b.score - a.score || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   for (const s of extras) {
     if (chosen.size >= MIN_BOARD_ROWS) break;
     chosen.set(s.p.slug, s.p);
@@ -287,7 +295,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
 
   const ranked = [...chosen.values()]
     .map((p) => byScore.get(p.slug)!)
-    .sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
+    .sort((a, b) => b.score - a.score || b.p.tvl_usd - a.p.tvl_usd || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
 
   return ranked.map((s, i) => ({
     rank: i + 1,
@@ -439,14 +447,15 @@ export function radarRow(row: BoardRow): RadarRow {
 }
 
 /** Everything the dashboard renders, from the snapshot. */
-export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const board = buildBoard(snapshot, model);
+export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL, minTvlUsd: number = MIN_TVL_USD): { board: BoardRow[]; radar: RadarData } {
+  const board = buildBoard(snapshot, model, minTvlUsd);
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
+    min_tvl_usd: minTvlUsd,
     model,
     model_version: MODEL_VERSION,
     watchlist_size: snapshot.watchlist.length,
